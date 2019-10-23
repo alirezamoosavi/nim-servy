@@ -4,6 +4,7 @@
 import strformat, tables, json, strutils, asyncdispatch, asyncnet, strutils, parseutils, options, net
 from cgi import decodeUrl
 import terminaltables
+import mimetypes
 
 
 type
@@ -773,6 +774,13 @@ proc serve*(s: ref Servy) {.async.} =
 
   runForever()
 
+
+proc newStaticMiddleware(dir: string): proc(request: var Request): (ref Response, bool) = 
+  result = proc(request: var Request): (ref Response, bool) = 
+    let path = request.path 
+    echo path
+    return (newResponse(), false)
+
 when isMainModule:
 
   const sampleRequest = """GET /index.html HTTP/1.1
@@ -864,8 +872,11 @@ received request from client: (httpMethod: HttpPost, requestURI: "", httpVersion
     router.addRoute("/abort", handleAbort, HttpGet)
 
 
+    let serveTmpDir = newStaticMiddleware("/tmp")
+      
+    
     let opts = ServerOptions(address:"127.0.0.1", port:9000.Port)
-    var s = newServy(opts, router, @[loggingMiddleware, trimTrailingSlash])
+    var s = newServy(opts, router, @[loggingMiddleware, trimTrailingSlash, serveTmpDir])
     asyncCheck s.serve()
     echo "servy started..."
     runForever()
