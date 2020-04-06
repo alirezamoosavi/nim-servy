@@ -1,4 +1,4 @@
-import uri, strutils, strformat, tables, asyncnet, asynchttpserver, asyncdispatch, parseutils, httpcore, httpclient, db_postgres
+import uri, strutils, strformat, tables, asyncnet, asynchttpserver, asyncdispatch, parseutils, httpcore, httpclient
 
 export httpcore except parseHeader
 export FutureVar
@@ -18,7 +18,7 @@ type Request* = object
   body*: string
   urlParams*: Table[string, string]
 
-template logMsg*(m: string) : untyped = 
+template logMsg*(m: string) : untyped =
   if s.options.debug:
     echo m
 
@@ -56,7 +56,7 @@ proc respond*(req: Request, code: HttpCode, content: string,
     msg.addHeaders(headers)
   msg.add("Content-Length: ")
   # this particular way saves allocations:
-  msg.add content.len
+  msg.addInt content.len
   msg.add "\c\L\c\L"
   msg.add(content)
   result = req.client.send(msg)
@@ -74,7 +74,6 @@ proc initResponse*(): Response =
 
 type ServerOptions* = object
   debug*: bool
-  db*: DbConn
   client*: HttpClientBase[AsyncSocket]
 
 type MiddlewareFunc* = proc(req: FutureVar[Request], s: ServerOptions ): bool {.closure, gcsafe.}
@@ -88,12 +87,12 @@ type RouterValue* = object
 type Router* = object
   table: Table[string, RouterValue]
   notFoundHandler: HandlerFunc
-  
+
 proc addRoute*(router: var Router, route: string, handler: HandlerFunc, httpMethod:HttpMethod=HttpGet, middlewares:seq[MiddlewareFunc]= @[]) =
   router.table.add(route, RouterValue(handlerFunc:handler, httpMethod: httpMethod, middlewares:middlewares))
- 
+
 proc handle404*(req: FutureVar[Request], s: ServerOptions) {.async.} =
-  await request.respond(Http404 , "Not Found")  
+  await request.respond(Http404 , "Not Found")
 
 proc initRouter*(notFoundHandler:HandlerFunc=handle404): Router =
   result.table =  initTable[string, RouterValue]()
@@ -104,7 +103,7 @@ type MyServer* = ref object
   socket: AsyncSocket
   reuseAddr: bool
   reusePort: bool
-  maxBody: int 
+  maxBody: int
   router: Router
   middlewares: seq[MiddlewareFunc]
   staticDir: string
@@ -335,28 +334,28 @@ proc getByPath*(r: Router, path: string, httpMethod=HttpGet) : (RouterValue, Tab
     var found = false
     if path in r.table and r.table[path].httpMethod == httpMethod:
       return (r.table[path],  initTable[string, string]())
-  
+
     for handlerPath, routerValue in r.table.pairs:
       if routerValue.httpMethod != httpMethod:
         continue
-  
+
     #   echo fmt"checking handler: {handlerPath} if it matches {path}"
       let pathParts = path.split({'/'})
       let handlerPathParts = handlerPath.split({'/'})
     #   echo fmt"pathParts {pathParts} and handlerPathParts {handlerPathParts}"
-  
+
       if len(pathParts) != len(handlerPathParts):
         # echo "length isn't ok"
         continue
       else:
         var idx = 0
         var capturedParams =  initTable[string, string]()
-  
+
         while idx<len(pathParts):
           let pathPart = pathParts[idx]
           let handlerPathPart = handlerPathParts[idx]
           # echo fmt"current pathPart {pathPart} current handlerPathPart: {handlerPathPart}"
-  
+
           if handlerPathPart.startsWith(":") or handlerPathPart.startsWith("@"):
             # echo fmt"found var in path {handlerPathPart} matches {pathPart}"
             capturedParams[handlerPathPart[1..^1]] = pathPart
@@ -366,26 +365,26 @@ proc getByPath*(r: Router, path: string, httpMethod=HttpGet) : (RouterValue, Tab
               inc idx
             else:
               break
-  
+
           if idx == len(pathParts):
             found = true
             return (routerValue, capturedParams)
-  
+
     if not found:
-  
+
       return (RouterValue(handlerFunc:r.notFoundHandler, middlewares: @[]),  initTable[string, string]())
 
 proc handleClient*(req: FutureVar[Request] ,s: MyServer, client: AsyncSocket) {.async.} =
   var res = initResponse()
   res.headers = newHttpHeaders({ "Content-Type": "text/html; charset=UTF-8"})
-  
+
   for  m in s.middlewares:
     let usenextmiddleware = m(req, s.options)
     if not usenextmiddleware:
     #   logMsg "early return from middleware..."
       await request.respond(res.resMethod, res.content)
       return
-  
+
   let (routeHandler, params) = s.router.getByPath(request.url.path, request.reqMethod)
   request.urlParams = params
   let handler = routeHandler.handlerFunc
@@ -403,10 +402,9 @@ proc handleClient*(req: FutureVar[Request] ,s: MyServer, client: AsyncSocket) {.
   except:
     raise
     # TODO log Error
-  
+
 
 proc run*(s: MyServer, port=8080 , address="") =
   asyncCheck s.serve( port = Port(port), handleClient, address = address)
   echo fmt"server started at {address}:{port} {s.options}"
   runForever()
-
