@@ -1,10 +1,5 @@
 import uri, strutils, strformat, tables, asyncnet, asynchttpserver, asyncdispatch, parseutils, httpcore, httpclient
 
-export httpcore except parseHeader
-export FutureVar
-export tables
-export strutils
-
 const
   maxLine = 8*1024
 
@@ -17,6 +12,7 @@ type Request* = object
   hostname*: string    ## The hostname of the client that made the request.
   body*: string
   urlParams*: Table[string, string]
+
 
 template logMsg*(m: string) : untyped =
   if s.options.debug:
@@ -61,42 +57,29 @@ proc respond*(req: Request, code: HttpCode, content: string,
   msg.add(content)
   result = req.client.send(msg)
 
-type Response* = object
-  headers*: HttpHeaders
-  httpver*: HttpVersion
-  resMethod*: HttpCode
-  urlParams*: Table[string, string]
-  content*: string
+# type Response* = object
+#   headers*: HttpHeaders
+#   httpver*: HttpVersion
+#   resMethod*: HttpCode
+#   urlParams*: Table[string, string]
+#   content*: string
+#
+# proc initResponse*(): Response =
+#   result.httpver = HttpVer11
+#   result.headers = newHttpHeaders()
 
-proc initResponse*(): Response =
-  result.httpver = HttpVer11
-  result.headers = newHttpHeaders()
+type Context* = object
+    Req* : Request
+    res* : Response
 
 type ServerOptions* = object
   debug*: bool
-  client*: HttpClientBase[AsyncSocket]
 
 type MiddlewareFunc* = proc(req: FutureVar[Request], s: ServerOptions ): bool {.closure, gcsafe.}
 type HandlerFunc* = proc(req: FutureVar[Request], s: ServerOptions): Future[void] {.nimcall ,closure, gcsafe.}
 
-type RouterValue* = object
-  handlerFunc: HandlerFunc
-  httpMethod: HttpMethod
-  middlewares:seq[MiddlewareFunc]
-
-type Router* = object
-  table: Table[string, RouterValue]
-  notFoundHandler: HandlerFunc
-
-proc addRoute*(router: var Router, route: string, handler: HandlerFunc, httpMethod:HttpMethod=HttpGet, middlewares:seq[MiddlewareFunc]= @[]) =
-  router.table.add(route, RouterValue(handlerFunc:handler, httpMethod: httpMethod, middlewares:middlewares))
-
-proc handle404*(req: FutureVar[Request], s: ServerOptions) {.async.} =
-  await request.respond(Http404 , "Not Found")
-
-proc initRouter*(notFoundHandler:HandlerFunc=handle404): Router =
-  result.table =  initTable[string, RouterValue]()
-  result.notFoundHandler = notFoundHandler
+# split up a large module into several files
+include router
 
 type MyServer* = ref object
   options: ServerOptions
@@ -330,59 +313,17 @@ maxBody = 8388608, options: ServerOptions): MyServer =
   result.reusePort = reusePort
   result.maxBody = maxBody
 
-proc getByPath*(r: Router, path: string, httpMethod=HttpGet) : (RouterValue, Table[string, string]) =
-    var found = false
-    if path in r.table and r.table[path].httpMethod == httpMethod:
-      return (r.table[path],  initTable[string, string]())
 
-    for handlerPath, routerValue in r.table.pairs:
-      if routerValue.httpMethod != httpMethod:
-        continue
-
-    #   echo fmt"checking handler: {handlerPath} if it matches {path}"
-      let pathParts = path.split({'/'})
-      let handlerPathParts = handlerPath.split({'/'})
-    #   echo fmt"pathParts {pathParts} and handlerPathParts {handlerPathParts}"
-
-      if len(pathParts) != len(handlerPathParts):
-        # echo "length isn't ok"
-        continue
-      else:
-        var idx = 0
-        var capturedParams =  initTable[string, string]()
-
-        while idx<len(pathParts):
-          let pathPart = pathParts[idx]
-          let handlerPathPart = handlerPathParts[idx]
-          # echo fmt"current pathPart {pathPart} current handlerPathPart: {handlerPathPart}"
-
-          if handlerPathPart.startsWith(":") or handlerPathPart.startsWith("@"):
-            # echo fmt"found var in path {handlerPathPart} matches {pathPart}"
-            capturedParams[handlerPathPart[1..^1]] = pathPart
-            inc idx
-          else:
-            if pathPart == handlerPathPart:
-              inc idx
-            else:
-              break
-
-          if idx == len(pathParts):
-            found = true
-            return (routerValue, capturedParams)
-
-    if not found:
-
-      return (RouterValue(handlerFunc:r.notFoundHandler, middlewares: @[]),  initTable[string, string]())
 
 proc handleClient*(req: FutureVar[Request] ,s: MyServer, client: AsyncSocket) {.async.} =
-  var res = initResponse()
-  res.headers = newHttpHeaders({ "Content-Type": "text/html; charset=UTF-8"})
+  # var res = initResponse()
+  # res.headers = newHttpHeaders({ "Content-Type": "text/html; charset=UTF-8"})
 
   for  m in s.middlewares:
     let usenextmiddleware = m(req, s.options)
     if not usenextmiddleware:
-    #   logMsg "early return from middleware..."
-      await request.respond(res.resMethod, res.content)
+      # logMsg "early return from middleware..."
+      await request.respond(Http404, "not found") # temprory
       return
 
   let (routeHandler, params) = s.router.getByPath(request.url.path, request.reqMethod)
@@ -394,7 +335,7 @@ proc handleClient*(req: FutureVar[Request] ,s: MyServer, client: AsyncSocket) {.
     let usenextmiddleware = m(req, s.options)
     if not usenextmiddleware:
     #   logMsg "early return from route middleware..."
-      await request.respond(res.resMethod, res.content)
+      await request.respond(Http404, "not found")
       return
 
   try :
