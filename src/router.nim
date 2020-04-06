@@ -10,7 +10,7 @@ type Router* = object
 proc addRoute*(router: var Router, route: string, handler: HandlerFunc, httpMethod:seq[HttpMethod]= @[HttpGet], middlewares:seq[MiddlewareFunc]= @[]) =
   router.table.add(route, RouterValue(handlerFunc:handler, httpMethod: httpMethod, middlewares:middlewares))
 
-proc handle404*(req: FutureVar[Request]) {.async.} =
+proc handle404*(req: FutureVar[Request],p: pointer) {.async.} =
   await request.respond(Http404 , "Not Found")
 
 proc initRouter*(notFoundHandler:HandlerFunc=handle404): Router =
