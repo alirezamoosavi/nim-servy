@@ -21,9 +21,6 @@ template logMsg*(m: string) : untyped =
 template request*: Request =
   req.mget()
 
-template res*: Request =
-  req.mget()
-
 proc addHeaders(msg: var string, headers: HttpHeaders) =
   for k, v in headers:
     msg.add(k & ": " & v & "\c\L")
@@ -68,21 +65,21 @@ proc respond*(req: Request, code: HttpCode, content: string,
 #   result.httpver = HttpVer11
 #   result.headers = newHttpHeaders()
 
-type Context* = object
+type Context*[T] = object
     Req* : Request
-    res* : Response
+    debug*: bool
+    U* : T
 
 type ServerOptions* = object
-  debug*: bool
 
-type MiddlewareFunc* = proc(req: FutureVar[Request], s: ServerOptions ): bool {.closure, gcsafe.}
-type HandlerFunc* = proc(req: FutureVar[Request], s: ServerOptions): Future[void] {.nimcall ,closure, gcsafe.}
+
+type MiddlewareFunc* = proc(req: FutureVar[Request] ): bool {.closure, gcsafe.}
+type HandlerFunc* = proc(req: FutureVar[Request]): Future[void] {.nimcall ,closure, gcsafe.}
 
 # split up a large module into several files
 include router
 
 type MyServer* = ref object
-  options: ServerOptions
   socket: AsyncSocket
   reuseAddr: bool
   reusePort: bool
@@ -303,10 +300,10 @@ proc serve*(server: MyServer, port: Port,
     #echo(f.repr)
 
 proc initMyServer*(router: Router, middlewares: seq[MiddlewareFunc], reuseAddr = true, reusePort = false,
-maxBody = 8388608, options: ServerOptions): MyServer =
+maxBody = 8388608): MyServer =
   ## Creates a new ``MyServer`` instance.
   new result
-  result.options = options
+
   result.router = router
   result.middlewares = middlewares
   result.reuseAddr = reuseAddr
@@ -320,7 +317,7 @@ proc handleClient*(req: FutureVar[Request] ,s: MyServer, client: AsyncSocket) {.
   # res.headers = newHttpHeaders({ "Content-Type": "text/html; charset=UTF-8"})
 
   for  m in s.middlewares:
-    let usenextmiddleware = m(req, s.options)
+    let usenextmiddleware = m(req)
     if not usenextmiddleware:
       # logMsg "early return from middleware..."
       await request.respond(Http404, "not found") # temprory
@@ -332,14 +329,14 @@ proc handleClient*(req: FutureVar[Request] ,s: MyServer, client: AsyncSocket) {.
   let middlewares = routeHandler.middlewares
 
   for  m in middlewares:
-    let usenextmiddleware = m(req, s.options)
+    let usenextmiddleware = m(req)
     if not usenextmiddleware:
     #   logMsg "early return from route middleware..."
       await request.respond(Http404, "not found")
       return
 
   try :
-    yield handler(req=req, s=s.options)
+    yield handler(req=req)
   except:
     raise
     # TODO log Error
@@ -347,5 +344,5 @@ proc handleClient*(req: FutureVar[Request] ,s: MyServer, client: AsyncSocket) {.
 
 proc run*(s: MyServer, port=8080 , address="") =
   asyncCheck s.serve( port = Port(port), handleClient, address = address)
-  echo fmt"server started at {address}:{port} {s.options}"
+  echo fmt"server started at {address}:{port}"
   runForever()
